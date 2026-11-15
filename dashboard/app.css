@@ -110,6 +110,11 @@ tr.top1 .rankchip { background: var(--amber); }
 .implied { display: flex; align-items: center; gap: var(--s2); }
 .implied .mult { color: var(--faint); font-size: 11px; }
 .badge { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.verdict { display: inline-block; font-family: var(--font-num); font-size: 11px; font-weight: 600; letter-spacing: .04em; border-radius: 6px; padding: 3px 8px; white-space: nowrap; }
+.verdict.farm { color: var(--accent-ink); background: var(--accent-soft); }
+.verdict.thin { color: var(--amber); background: var(--amber-soft); }
+.verdict.skip { color: var(--muted); background: var(--surface-2); }
+.plan-sum .verdict { font-size: 12px; }
 .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .badge.live::before { background: var(--amber); }
 
