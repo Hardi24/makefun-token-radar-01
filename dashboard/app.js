@@ -1,6 +1,6 @@
 // Token Radar dashboard. Reads window.RADAR (written beside dashboard/ by main.ts) and renders
-// the ranked board, a filterable table, category totals, a per-protocol detail drawer with the
-// model's own arithmetic and the protocol's farm plan. No network: every byte shown is in data.js.
+// the ranked board, a filterable table, category totals and a per-protocol detail drawer.
+// No network: every byte shown is in data.js.
 (function () {
   'use strict';
 
@@ -30,11 +30,9 @@
     if (!s) return 'unknown';
     return s;
   }
-  // The model in one function (radar-3): the page recomputes a row from the snapshot figures and
-  // checks the number board.json carries, so the page's code and the board's data are visibly the
-  // same arithmetic. The multiple is a size curve fitted to the snapshot's own live-token
-  // comparables (DATA.model carries the fitted coefficients); growth, maturity and chains are the
-  // same multipliers main.ts uses. No name is special-cased.
+  // The model in one function (radar-4): the page recomputes a row from the snapshot figures and
+  // checks the number board.json carries. The multiple is the size curve fitted to the snapshot's
+  // own live-token comparables; growth, maturity and chains are the same multipliers main.ts uses.
   function categoryTier(category) {
     var c = (category || '').toLowerCase();
     if (c === 'cex' || c === 'chain' || c.indexOf('bridge') >= 0 || c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0 || c.indexOf('wrapper') >= 0 || c.indexOf('anchor btc') >= 0 || c.indexOf('decentralized btc') >= 0) return 'infra';
@@ -54,8 +52,8 @@
   function formatUsdInt(n) {
     return '$' + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
-  // A plan's economics, the same arithmetic main.ts writes to board.json: capital the steps deploy,
-  // gas they burn, all-in cost, value at the comps' low end, net after cost, and the verdict.
+  // A plan's economics, the same arithmetic main.ts writes to board.json: capital, gas, all-in
+  // cost, low-end value, net, break-even, verdict.
   function planEconomics(p) {
     var capital = capitalFor(p);
     var small = Math.max(10, Math.round(capital / 5));
@@ -67,7 +65,19 @@
     var net = lowEnd - totalCost;
     var ratio = lowEnd / totalCost;
     var verdict = ratio >= 10000 ? 'FARM' : ratio >= 1000 ? 'THIN' : 'SKIP';
-    return { capital_usd: totalCapital, gas_usd: gas, total_cost_usd: totalCost, low_end_usd: lowEnd, net_usd: net, verdict: verdict };
+    var breakEven = Math.max(1, Math.round(totalCost / DATA.model.low_factor));
+    return { capital_usd: totalCapital, gas_usd: gas, total_cost_usd: totalCost, low_end_usd: lowEnd, net_usd: net, break_even_usd: breakEven, verdict: verdict };
+  }
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function formatDay(iso) {
+    if (!iso) return 'unknown';
+    var parts = iso.split('-');
+    return Number(parts[2]) + ' ' + MONTHS[Number(parts[1]) - 1] + ' ' + parts[0];
+  }
+  function addDays(iso, days) {
+    var t = Date.parse(iso + 'T00:00:00Z') + days * 86400000;
+    var d = new Date(t);
+    return d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
   }
 
   function el(tag, attrs) {
@@ -91,9 +101,9 @@
     return node;
   }
 
-  // The farm plan is the same derivation main.ts writes to board.json (radar-3, seven steps):
-  // category, chains, TVL, age and seven-day growth decide the actions, the capital, the hold and
-  // every cost and time; the last step nets the plan at the comps' low end. No name is special-cased.
+  // The farm plan mirrors main.ts (radar-4, seven steps): category, chains, TVL, age and growth
+  // decide the actions, capital, hold and costs; dated from the snapshot's date; the last step
+  // nets the plan at the low end.
   function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
   function secondChainOf(p) { return p.chains && p.chains.length > 1 ? p.chains[1] : null; }
   function capitalFor(p) {
@@ -164,7 +174,7 @@
     var listed = p.listed_at === null || p.listed_at === undefined ? 'an unlisted start date' : p.listed_at;
     var econ = planEconomics(p);
     return [
-      { text: 'Open a fresh wallet for this farm only, fund it on ' + chain + ' with $' + capital + ' in USDC plus about $5 for gas, and keep its seed phrase offline.', cost: '$' + capital + ' of USDC plus about $5 of gas', time: '10 minutes' },
+      { text: 'On ' + formatDay(DATA.as_of) + ', open a fresh wallet for this farm only, fund it on ' + chain + ' with $' + capital + ' in USDC plus about $5 for gas, and keep its seed phrase offline.', cost: '$' + capital + ' of USDC plus about $5 of gas', time: '10 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
       { text: secondActionFor(p, capital, chain), cost: 'about $' + small + ' of capital and $2 of gas', time: '10 minutes' },
       { text: second !== null
@@ -172,8 +182,8 @@
           : 'Deepen the position on ' + chain + ': add a second $' + small + ' tranche to a different pool or vault of ' + p.name + ', so the wallet is not a single deposit.',
         cost: 'about $' + small + ' of capital and $2 of gas', time: '10 minutes' },
       { text: 'Return once a week and repeat a qualifying action on ' + chain + ', such as a deposit, a swap, a borrow or a vote, so the wallet stays active in every weekly snapshot.' + growthNote, cost: 'about $2 of gas a week', time: '10 minutes a week' },
-      { text: 'Hold the position for at least ' + hold + ' days: ' + p.name + ' has been tracked since ' + listed + ', so a position that spans several snapshots counts more than a one-day deposit.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
-      { text: 'Before you withdraw, open ' + p.name + '\'s own points or rewards page from its official site and claim only from the link it publishes; never pay a fee to claim, and log the wallet, the dates and every transaction hash. Plan total: ' + formatUsdInt(econ.total_cost_usd) + ' all in (' + formatUsdInt(econ.capital_usd) + ' capital + ' + formatUsdInt(econ.gas_usd) + ' gas). At the comps\' low end this protocol is worth ' + formatUsdInt(econ.low_end_usd) + ' — net ' + formatUsdInt(econ.net_usd) + ' after the plan\'s cost, verdict ' + econ.verdict + '.', cost: 'no fee to check, and never pay to claim', time: '15 minutes' }
+      { text: 'Hold the position for at least ' + hold + ' days, until ' + addDays(DATA.as_of, hold) + ': ' + p.name + ' has been tracked since ' + listed + ', so a position that spans several snapshots counts more than a one-day deposit.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
+      { text: 'Before you withdraw, open ' + p.name + '\'s own rewards page from its official site and claim only from the link it publishes; never pay a fee to claim, and log the wallet, the dates and every transaction hash. Plan total ' + formatUsdInt(econ.total_cost_usd) + ' all in. At the comps\' low end this protocol is worth ' + formatUsdInt(econ.low_end_usd) + ' — net ' + formatUsdInt(econ.net_usd) + ', verdict ' + econ.verdict + '. Breaks even if the token launches at ' + formatUsdInt(econ.break_even_usd) + ' at the low end.', cost: 'no fee to check, and never pay to claim', time: '15 minutes' }
     ].map(stepText);
   }
 
@@ -272,8 +282,9 @@
           'The watchlist is the floor: every protocol with at least ', el('b', { text: '$' + Math.round(DATA.floor_usd / 1e6) + 'M' }),
           ' of TVL and no token on record — plus ', el('b', { text: DATA.early_size + ' early finds' }),
           ' below that floor. Priced from ', el('b', { text: DATA.calibration.comps_n + ' live-token comparables' }),
-          ': a size curve fitted to their market caps and tested blind (median error ',
-          el('b', { text: DATA.calibration.cv_median_abs_error.toFixed(2) + '×' }), ' on held-out comps). Implied value is a model of the snapshot, not a promise of a launch or a price.'
+          ': a size curve fitted to their market caps and tested blind — walk-forward ',
+          el('b', { text: DATA.calibration.wf50_median_abs_error.toFixed(2) + '×' }), ' against ',
+          el('b', { text: DATA.calibration.wf50_flat_median_abs_error.toFixed(2) + '×' }), ' for a flat multiple. Implied value is a model of the snapshot, not a promise of a launch or a price.'
         )
       ),
       el('div', { class: 'stats' },
@@ -281,6 +292,12 @@
         el('div', { class: 'stat' }, el('span', { text: 'Top 10 hold' }), el('b', { text: top10Share + '%' }), el('small', { text: 'of all implied value' })),
         el('div', { class: 'stat' }, el('span', { text: 'Median protocol' }), el('b', { text: fmtUsd(medianImplied) }), el('small', { text: 'rank ' + Math.ceil(DATA.board_size / 2) + ' of ' + DATA.board_size })),
         el('div', { class: 'stat' }, el('span', { text: 'Live-token set aside' }), el('b', { text: String(DATA.live_size) }), el('small', { text: 'shown with market caps, not models' }))
+      ),
+      el('div', { class: 'valid' },
+        el('span', null, 'Walk-forward 50/50: curve ', el('b', { text: DATA.calibration.wf50_median_abs_error.toFixed(2) + '×' }), ', flat ', el('b', { text: DATA.calibration.wf50_flat_median_abs_error.toFixed(2) + '×' })),
+        el('span', null, 'Walk-forward 70/30: curve ', el('b', { text: DATA.calibration.wf70_median_abs_error.toFixed(2) + '×' }), ', flat ', el('b', { text: DATA.calibration.wf70_flat_median_abs_error.toFixed(2) + '×' })),
+        el('span', null, 'Leave-one-out: curve ', el('b', { text: DATA.calibration.loo_median_abs_error.toFixed(2) + '×' }), ', flat ', el('b', { text: DATA.calibration.loo_flat_median_abs_error.toFixed(2) + '×' })),
+        el('span', null, el('b', { text: DATA.calibration.bootstrap_refits + ' bootstrap refits' }), ' behind every row\u2019s P10–P90 band')
       )
     );
   }
@@ -507,8 +524,11 @@
         el('b', { text: fmtUsd(top.implied_value_usd) }), '.'
       ),
       el('p', { class: 'note' }, 'Where the curve comes from: the comps are the snapshot\u2019s live-token protocols with a market cap above zero, minus CEX and minus the infra categories the watchlist rule excludes (bridges, staking, restaking, chains, wrappers, anchor-BTC) — ' + c.comps_n + ' protocols (' + c.comps_premium_n + ' premium, ' + c.comps_standard_n + ' standard by category word). For each, the residual multiple is market cap divided by TVL after growth, maturity and chain effects are stripped out; the curve is the least-squares line of log multiple on log TVL. Its slope is negative: a bigger protocol trades at a lower multiple of TVL, so the curve prices size from the market instead of charging every size the same multiple.'),
-      el('p', { class: 'note' }, 'Tested blind: 5-fold cross-validation over the comps (folds by slug order, four folds fit, one held out) predicts held-out market caps with a median error of ', el('b', { text: c.cv_median_abs_error.toFixed(2) + '×' }), ' and ', el('b', { text: Math.round(c.cv_within_2x * 100) + '% within 2×' }), '. The old flat prior (0.25 of TVL, tested the same way) lands a touch closer on this noisy set (' + c.flat_cv_median_abs_error.toFixed(2) + '×, ' + Math.round(c.flat_cv_within_2x * 100) + '% within 2×) — the curve is kept anyway, because it prices the size effect the market itself shows instead of asserting one multiple for every size. Growth is clamped because one protocol in the snapshot moved +4,448% in seven days; maturity rewards protocols that have run longest with no token. Age is the time since the protocol was first listed; an unlisted age uses ' + m.unknown_age_days + ' days. A protocol \u201Crecords no token\u201D when the snapshot carries no market cap, no CoinGecko id and no symbol for it; that is a record, not proof it has none.'),
-      el('p', { class: 'note' }, 'Farm plans are netted at the market\u2019s low end: low-end value is the implied value × ' + m.low_factor.toFixed(3) + ', the comps\u2019 25th-percentile multiple over their median. Each plan\u2019s verdict compares that low-end value with the plan\u2019s all-in cost (capital plus gas): FARM at 10,000× or more, THIN at 1,000× or more, SKIP below. On this board: ' + farm + ' FARM, ' + thin + ' THIN, ' + skip + ' SKIP — no row falls below THIN, since even the weakest low-end value on the board is still over 5,000× its plan\u2019s cost.')
+      el('p', { class: 'note' }, 'Tested blind, walk-forward: the comps are split by listing date — the curve is fitted on the older half and tested on the newer half, then 70/30 — because a launch radar is judged on future launches, not on a random shuffle of past ones. The curve beats a flat multiple on both splits: 50/50, median error ', el('b', { text: c.wf50_median_abs_error.toFixed(2) + '×' }), ' (', el('b', { text: Math.round(c.wf50_within_2x * 100) + '% within 2×' }), ') against the flat prior\u2019s ' + c.wf50_flat_median_abs_error.toFixed(2) + '× (' + Math.round(c.wf50_flat_within_2x * 100) + '%); 70/30, ', el('b', { text: c.wf70_median_abs_error.toFixed(2) + '×' }), ' (', el('b', { text: Math.round(c.wf70_within_2x * 100) + '% within 2×' }), ') against ' + c.wf70_flat_median_abs_error.toFixed(2) + '× (' + Math.round(c.wf70_flat_within_2x * 100) + '%).'),
+      el('p', { class: 'note' }, 'Tested blind, the other two ways: 5-fold cross-validation (folds by slug order, four fit, one held out) gives a median error of ', el('b', { text: c.cv_median_abs_error.toFixed(2) + '×' }), ' (', el('b', { text: Math.round(c.cv_within_2x * 100) + '% within 2×' }), ') against the flat prior\u2019s ' + c.flat_cv_median_abs_error.toFixed(2) + '× (' + Math.round(c.flat_cv_within_2x * 100) + '%); leave-one-out gives ', el('b', { text: c.loo_median_abs_error.toFixed(2) + '×' }), ' against ' + c.loo_flat_median_abs_error.toFixed(2) + '×. On a random shuffle the curve lands about level with a flat multiple — the size effect shows in time. Every term earned its place in a blind test of its own: the curve alone, then +growth, +maturity and +chains, each scored walk-forward; no term harms the walk-forward test and maturity improves it, so all three are kept. Growth is clamped because one protocol in the snapshot moved +4,448% in seven days; maturity rewards protocols that have run longest with no token. Age is the time since the protocol was first listed; an unlisted age uses ' + m.unknown_age_days + ' days. A protocol \u201Crecords no token\u201D when the snapshot carries no market cap, no CoinGecko id and no symbol for it; that is a record, not proof it has none.'),
+      el('p', { class: 'note' }, 'Uncertainty, not just a point: the curve is refitted ', el('b', { text: c.bootstrap_refits + ' times' }), ' on comps resampled with replacement (seeded, so the run is reproducible); every row carries the 10th–90th percentile of its implied value plus the best and worst rank it took — in each protocol\u2019s detail view. A wide band means the market\u2019s own noise leaves the value open.'),
+      el('p', { class: 'note' }, 'Farm plans are netted at the market\u2019s low end: low-end value is the implied value × ' + m.low_factor.toFixed(3) + ', the comps\u2019 25th-percentile multiple over their median. Each plan\u2019s verdict compares that low-end value with the plan\u2019s all-in cost (capital plus gas): FARM at 10,000× or more, THIN at 1,000× or more, SKIP below. On this board: ' + farm + ' FARM, ' + thin + ' THIN, ' + skip + ' SKIP — no row falls below THIN, since even the weakest low-end value on the board is still over 5,000× its plan\u2019s cost. Every plan is dated — it starts on the snapshot\u2019s date and holds until a named end date — and states the launch value at which it breaks even at the low end.'),
+      el('p', { class: 'note' }, 'Audited, not just ranked: ' + DATA.audit.pre_token + ' protocols in the snapshot record no token; ' + DATA.audit.ranked + ' are ranked here and the rest are set aside with their reason — ' + DATA.audit.excluded_cex + ' exchanges, ' + DATA.audit.excluded_versioned + ' versioned pools, ' + DATA.audit.excluded_above_floor + ' above the watchlist floor that the rule leaves out (' + DATA.audit.excluded_above_floor_wrapped + ' of them bridges, staking or wrappers of tokens that already trade).')
     );
   }
 
@@ -576,6 +596,9 @@
         'Recomputed in this page from the snapshot figures: ', el('b', { text: fmtUsd(recomputed) }),
         recomputed === row.implied_value_usd ? ' — the same number the board carries.' : ' — differs from the board: the data would be stale.',
         ' This is an estimate, not a price.'
+      ),
+      el('p', { class: 'check' },
+        'Uncertainty — the curve refitted ', el('b', { text: DATA.calibration.bootstrap_refits + ' times' }), ' on comps resampled with replacement: this protocol\u2019s implied value runs ', el('b', { text: fmtUsd(row.implied_p10_usd) + ' – ' + fmtUsd(row.implied_p90_usd) }), ' (10th–90th percentile) and its rank runs ', el('b', { text: 'rank ' + row.rank_low + '–' + row.rank_high }), ' across the refits.'
       )
     ));
     dialog.appendChild(el('section', { class: 'detail-section' },
@@ -586,6 +609,7 @@
         el('span', { text: 'Gas ' + formatUsdInt(econ.gas_usd) }),
         el('span', { text: 'All-in ' + formatUsdInt(econ.total_cost_usd) }),
         el('span', { text: 'Hold ' + hold + ' days' }),
+        el('span', { text: 'Break-even ' + formatUsdInt(econ.break_even_usd) }),
         el('span', { class: 'verdict ' + econ.verdict.toLowerCase(), text: econ.verdict + ' · net ' + formatUsdInt(econ.net_usd) })
       ),
       el('p', { class: 'note' }, 'Netted at the market\u2019s low end: this protocol at the comps\u2019 lower quartile is worth ', el('b', { text: formatUsdInt(econ.low_end_usd) }), ', against ', el('b', { text: formatUsdInt(econ.total_cost_usd) + ' all-in' }), ' for the plan — a net of ', el('b', { text: formatUsdInt(econ.net_usd) }), '. Verdict ', el('b', { text: econ.verdict }), ': FARM at 10,000× the plan\u2019s cost or more, THIN at 1,000× or more, SKIP below. The low end is the implied value × ' + DATA.model.low_factor.toFixed(3) + ', the comps\u2019 25th-percentile multiple over their median.'),

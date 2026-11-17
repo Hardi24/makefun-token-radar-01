@@ -1,11 +1,12 @@
 // Token radar entry for make.fun token-radar-01 (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), fits the
-// radar-3 size curve to the snapshot's own live-token comparables and scores every pre-token protocol
+// radar-4 size curve to the snapshot's own live-token comparables and scores every pre-token protocol
 // with it (implied value = TVL x fitted multiple x growth x maturity x chains, the curve tested blind
-// with 5-fold cross-validation inside lib/model.ts), writes the ranked board of 226 rows to
-// /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output. Last, it
-// writes /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
+// with walk-forward, leave-one-out and 5-fold splits plus a 200-refit bootstrap band inside
+// lib/model.ts), writes the ranked board of 226 rows to /output/board.json, and copies this
+// repository's dashboard/ and screenshots/ to /output. Last, it writes /output/dossier.json, the
+// summary the judge reads, with the vendored make.fun library.
 //
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
 // and dashboard/app.js read /output/data.js, which this program writes from the same board. It covers

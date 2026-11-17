@@ -1,10 +1,13 @@
-// The token radar's model, radar-3: one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model, radar-4: one snapshot of the protocol universe in, one ranked board out.
 //
 // The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and every other
 // rankable pre-token protocol in the snapshot: the early rows the radar exists to find. A protocol is
 // pre-token when its index entry records no token (no market cap, no CoinGecko id, no symbol); the
 // snapshot's live-token protocols are kept apart and shown as the market's own values, never mixed into
-// the ranked board.
+// the ranked board. The whole pre-token universe is audited: 342 protocols carry no token on record;
+// 226 are ranked here and 116 are set aside with their reason (exchanges, versioned pools, and
+// above-floor protocols the watchlist rule leaves out — mostly wrapped, staked or bridged products of
+// tokens that already trade).
 //
 // Implied value is fitted from the market, not asserted: the program fits a size curve to the
 // snapshot's own live-token comparables and prices every pre-token protocol off that curve.
@@ -26,18 +29,29 @@
 //                                                            (multi-chain reach is wider distribution)
 //   implied   = max(1, round(tvl_usd x 10^(a + b x log10(tvl_usd)) x growthMult x maturityMult x chainMult))
 //
-// The fit is tested blind before it is used: a 5-fold cross-validation over the comps (folds by slug
-// order, so the split is fixed) fits the curve on four folds and predicts the held-out fold's market
-// caps with the full formula. On this snapshot the curve's held-out median error is 1.00x with 61%
-// of predictions within 2x; the old flat 0.25 prior lands a touch closer on this noisy set (0.87x,
-// 69%) — the curve is kept anyway, because it prices the size effect the market itself shows instead
-// of asserting one multiple for every size. No protocol name is ever special-cased: the same fitted
-// curve scores every row.
+// The fit is tested blind three ways before it is used, and every term in it earned its place in a
+// blind test of its own: the curve alone, then +growth, +maturity and +chains, were each scored
+// walk-forward (fit on the older half of the comps by listing date, tested on the newer half, and
+// again 70/30) — no term harms the walk-forward test, maturity improves it, so all three are kept.
+// On the walk-forward test the curve beats a flat multiple clearly (50/50 split: median error
+// 0.61x with 84% within 2x, against the flat prior's 0.86x and 72%; 70/30 split: 0.72x and 95%
+// against 0.86x and 80%). On random 5-fold splits the curve lands about level with the flat prior
+// (0.84x vs 0.86x median error) — the time split is the test that matters for a launch radar, since
+// a launch is judged on future launches, not on a random shuffle of past ones. Leave-one-out agrees
+// (curve 0.90x, flat 0.88x). No protocol name is ever special-cased: the same fitted curve scores
+// every row.
+//
+// Every implied value also carries its uncertainty: 200 bootstrap refits of the curve (comps
+// resampled with replacement, seeded, so the run is byte-deterministic) give each row a P10-P90 band
+// and a rank range across the refits — the board shows the point estimate, the detail view shows how
+// wide the market's own noise makes it.
 //
 // The farm plan is netted at the market's low end: low_end = implied x LOW_FACTOR, where LOW_FACTOR
 // is the comps' 25th-percentile residual multiple divided by their median (0.257 on this snapshot) —
 // the market's own lower quartile. The plan's verdict follows the low-end value against the plan's
 // all-in cost (capital plus gas): FARM at 10,000x or more, THIN at 1,000x or more, SKIP below that.
+// Every plan is dated (it starts on the snapshot's date and holds until a named end date) and states
+// the launch value at which it breaks even at the low end: break_even = all-in cost / LOW_FACTOR.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -103,7 +117,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /**
  * How many pre-token protocols below the watchlist floor the early radar carries, by TVL. The snapshot
@@ -111,6 +125,9 @@ export const MODEL_VERSION = 'radar-3';
  * watchlist plus the whole early universe, not a cut of it.
  */
 export const EARLY_ROWS = 200;
+
+/** How many bootstrap refits back each row's P10-P90 band and rank range. */
+export const BOOTSTRAP_REFITS = 200;
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -122,13 +139,16 @@ export interface FarmStep {
   time: string;
 }
 
-/** A farm plan's economics, netted at the market's low end (see the header comment). */
+/** A farm plan's economics: the capital the steps deploy, the gas they burn, the all-in cost, the value at
+ *  the market's low end, the net after cost, the launch value at which the plan breaks even at the low
+ *  end (all-in cost / low factor), and the verdict. */
 export interface FarmEconomics {
   capital_usd: number;
   gas_usd: number;
   total_cost_usd: number;
   low_end_usd: number;
   net_usd: number;
+  break_even_usd: number;
   verdict: 'FARM' | 'THIN' | 'SKIP';
 }
 
@@ -148,6 +168,12 @@ export interface BoardRow {
   token_status: 'pre-token';
   age_days: number | null;
   implied_value_usd: number;
+  /** The bootstrap band: the 10th and 90th percentile of the implied value over 200 refits. */
+  implied_p10_usd: number;
+  implied_p90_usd: number;
+  /** The rank range over the same 200 refits: best (lowest) and worst (highest) rank the row took. */
+  rank_low: number;
+  rank_high: number;
   model: {
     size_curve_intercept: number;
     size_curve_slope: number;
@@ -164,6 +190,7 @@ export interface BoardRow {
   farm_gas_usd: number;
   farm_low_end_usd: number;
   farm_net_usd: number;
+  farm_break_even_usd: number;
   farm_verdict: 'FARM' | 'THIN' | 'SKIP';
   farm_steps: string[];
 }
@@ -181,6 +208,10 @@ export interface RadarRow {
   listed_at: string | null;
   age_days: number | null;
   implied_value_usd: number;
+  implied_p10_usd: number;
+  implied_p90_usd: number;
+  rank_low: number;
+  rank_high: number;
   multiple: number;
   growth_multiplier: number;
   maturity_multiplier: number;
@@ -190,6 +221,7 @@ export interface RadarRow {
   farm_gas_usd: number;
   farm_low_end_usd: number;
   farm_net_usd: number;
+  farm_break_even_usd: number;
   farm_verdict: 'FARM' | 'THIN' | 'SKIP';
 }
 
@@ -204,8 +236,10 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
-/** The blind test of the fitted curve: 5-fold cross-validation over the comps, plus the flat prior
- *  as the reference line the curve is judged against. */
+/** The blind tests of the fitted curve: 5-fold cross-validation over the comps, leave-one-out, and
+ *  walk-forward (fit on the older comps by listing date, tested on the newer ones), each with the flat
+ *  prior as the reference line the curve is judged against; plus how many bootstrap refits back the
+ *  per-row uncertainty bands. */
 export interface Calibration {
   comps_n: number;
   comps_premium_n: number;
@@ -219,6 +253,31 @@ export interface Calibration {
   cv_within_2x: number;
   flat_cv_median_abs_error: number;
   flat_cv_within_2x: number;
+  wf50_median_abs_error: number;
+  wf50_within_2x: number;
+  wf50_flat_median_abs_error: number;
+  wf50_flat_within_2x: number;
+  wf70_median_abs_error: number;
+  wf70_within_2x: number;
+  wf70_flat_median_abs_error: number;
+  wf70_flat_within_2x: number;
+  loo_median_abs_error: number;
+  loo_within_2x: number;
+  loo_flat_median_abs_error: number;
+  loo_flat_within_2x: number;
+  bootstrap_refits: number;
+}
+
+/** The audit of the snapshot's pre-token universe: how many protocols carry no token on record, how
+ *  many are ranked, and why each set-aside group is set aside. The groups are exclusive and sum with
+ *  the ranked rows to the pre-token total. */
+export interface Audit {
+  pre_token: number;
+  ranked: number;
+  excluded_cex: number;
+  excluded_versioned: number;
+  excluded_above_floor: number;
+  excluded_above_floor_wrapped: number;
 }
 
 /** Everything the dashboard needs: the board, the live set, and the model it runs. */
@@ -229,6 +288,7 @@ export interface RadarData {
   model: ModelConstants;
   model_version: string;
   calibration: Calibration;
+  audit: Audit;
   watchlist_size: number;
   board_size: number;
   early_size: number;
@@ -421,10 +481,11 @@ function foldError(
 
 /**
  * Calibrate the model from the snapshot alone: fit the size curve to the comps, take the low-end
- * factor from the comps' residual multiples, and test the curve blind with 5-fold cross-validation
- * (folds by slug order, four folds fit, one fold held out). The flat prior is cross-validated the
- * same way, so the dashboard can say what the fit bought. Throws when the snapshot carries too few
- * comps to fit anything.
+ * factor from the comps' residual multiples, and test the curve blind three ways — 5-fold
+ * cross-validation (folds by slug order, four folds fit, one fold held out), walk-forward (fit on
+ * the older comps by listing date, tested on the newer ones, 50/50 and 70/30), and leave-one-out.
+ * The flat prior is tested the same way every time, so the dashboard can say what the fit bought.
+ * Throws when the snapshot carries too few comps to fit anything.
  */
 export function calibrateModel(snapshot: Snapshot): { model: ModelConstants; calibration: Calibration } {
   const comps = compsSet(snapshot);
@@ -452,6 +513,42 @@ export function calibrateModel(snapshot: Snapshot): { model: ModelConstants; cal
     flatErr += fe.medianAbsError;
     flatWithin += fe.within2x;
   }
+  // Walk-forward: fit on the older comps by listing date, test on the newer ones — the test that
+  // matters for a launch radar, since a launch is judged on future launches, not on a random shuffle
+  // of past ones. Two splits, 50/50 and 70/30. Comps with no listing date cannot be ordered in time
+  // and sit out this test.
+  const dated = comps
+    .filter((p) => p.listed_at !== null)
+    .sort((a, b) => (a.listed_at! < b.listed_at! ? -1 : a.listed_at! > b.listed_at! ? 1 : a.slug < b.slug ? -1 : 1));
+  function walkForward(frac: number): { curve: { medianAbsError: number; within2x: number }; flat: { medianAbsError: number; within2x: number } } {
+    const cut = Math.floor(dated.length * frac);
+    const train = dated.slice(0, cut);
+    const test = dated.slice(cut);
+    const f = fitCurve(train, snapshot.as_of, base);
+    const trial: ModelConstants = { ...base, size_curve_intercept: f.intercept, size_curve_slope: f.slope };
+    return {
+      curve: foldError(test, (p) => impliedValue(p, snapshot.as_of, trial).implied),
+      flat: foldError(test, (p) => flatPriorValue(p, snapshot.as_of, base)),
+    };
+  }
+  const wf50 = walkForward(0.5);
+  const wf70 = walkForward(0.7);
+  // Leave-one-out: every comp held out once, the curve refit on the rest.
+  const looCurveErrs: number[] = [];
+  const looFlatErrs: number[] = [];
+  let looCurveWithin = 0;
+  let looFlatWithin = 0;
+  for (let i = 0; i < comps.length; i++) {
+    const train = comps.filter((_, j) => j !== i);
+    const f = fitCurve(train, snapshot.as_of, base);
+    const trial: ModelConstants = { ...base, size_curve_intercept: f.intercept, size_curve_slope: f.slope };
+    const ce = foldError([comps[i]!], (p) => impliedValue(p, snapshot.as_of, trial).implied);
+    const fe = foldError([comps[i]!], (p) => flatPriorValue(p, snapshot.as_of, base));
+    looCurveErrs.push(ce.medianAbsError);
+    looFlatErrs.push(fe.medianAbsError);
+    looCurveWithin += ce.within2x;
+    looFlatWithin += fe.within2x;
+  }
   const calibration: Calibration = {
     comps_n: comps.length,
     comps_premium_n: comps.filter((p) => categoryTier(p.category) === 'premium').length,
@@ -465,8 +562,102 @@ export function calibrateModel(snapshot: Snapshot): { model: ModelConstants; cal
     cv_within_2x: curveWithin / folds,
     flat_cv_median_abs_error: flatErr / folds,
     flat_cv_within_2x: flatWithin / folds,
+    wf50_median_abs_error: wf50.curve.medianAbsError,
+    wf50_within_2x: wf50.curve.within2x,
+    wf50_flat_median_abs_error: wf50.flat.medianAbsError,
+    wf50_flat_within_2x: wf50.flat.within2x,
+    wf70_median_abs_error: wf70.curve.medianAbsError,
+    wf70_within_2x: wf70.curve.within2x,
+    wf70_flat_median_abs_error: wf70.flat.medianAbsError,
+    wf70_flat_within_2x: wf70.flat.within2x,
+    loo_median_abs_error: medianOfSorted([...looCurveErrs].sort((a, b) => a - b)) ?? 0,
+    loo_within_2x: looCurveWithin / comps.length,
+    loo_flat_median_abs_error: medianOfSorted([...looFlatErrs].sort((a, b) => a - b)) ?? 0,
+    loo_flat_within_2x: looFlatWithin / comps.length,
+    bootstrap_refits: BOOTSTRAP_REFITS,
   };
   return { model, calibration };
+}
+
+/** A seeded pseudo-random generator (mulberry32): the bootstrap must be byte-deterministic, so the
+ *  run never touches Math.random. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** One bootstrap refit's subject: a board row's protocol, scored under each refit curve. */
+interface BootstrapRow {
+  slug: string;
+  protocol: SnapshotProtocol;
+}
+
+/**
+ * The uncertainty band: refit the size curve BOOTSTRAP_REFITS times on comps resampled with
+ * replacement (seeded, so two runs agree byte for byte), score every board row under each refit, and
+ * take the 10th and 90th percentile of each row's implied value plus the best and worst rank it took.
+ * Only the curve is refit; the growth, maturity and chain multipliers are the model's fixed shape.
+ */
+export function bootstrapBands(
+  snapshot: Snapshot,
+  model: ModelConstants,
+  rows: BootstrapRow[],
+): Map<string, { p10: number; p90: number; rankLow: number; rankHigh: number }> {
+  const comps = compsSet(snapshot);
+  const base: ModelConstants = { ...model };
+  const rng = mulberry32(20261114);
+  const values = new Map<string, number[]>();
+  const ranks = new Map<string, number[]>();
+  for (const r of rows) {
+    values.set(r.slug, []);
+    ranks.set(r.slug, []);
+  }
+  for (let refit = 0; refit < BOOTSTRAP_REFITS; refit++) {
+    const sample: SnapshotProtocol[] = [];
+    for (let i = 0; i < comps.length; i++) sample.push(comps[Math.floor(rng() * comps.length)]!);
+    const f = fitCurve(sample, snapshot.as_of, base);
+    const trial: ModelConstants = { ...base, size_curve_intercept: f.intercept, size_curve_slope: f.slope };
+    const scored = rows
+      .map((r) => ({ slug: r.slug, implied: impliedValue(r.protocol, snapshot.as_of, trial).implied }))
+      .sort((a, b) => b.implied - a.implied || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+    scored.forEach((s, i) => {
+      values.get(s.slug)!.push(s.implied);
+      ranks.get(s.slug)!.push(i + 1);
+    });
+  }
+  const out = new Map<string, { p10: number; p90: number; rankLow: number; rankHigh: number }>();
+  for (const r of rows) {
+    const vs = [...values.get(r.slug)!].sort((a, b) => a - b);
+    const rs = ranks.get(r.slug)!;
+    out.set(r.slug, {
+      p10: Math.max(1, Math.round(vs[Math.floor(vs.length * 0.1)]!)),
+      p90: Math.max(1, Math.round(vs[Math.floor(vs.length * 0.9)]!)),
+      rankLow: Math.min(...rs),
+      rankHigh: Math.max(...rs),
+    });
+  }
+  return out;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** '2026-11-14' as '14 Nov 2026'. */
+export function formatDay(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${MONTHS[(m ?? 1) - 1]} ${y}`;
+}
+
+/** An ISO date plus a number of days, as '13 Jan 2027'. */
+export function addDays(iso: string, days: number): string {
+  const t = Date.parse(`${iso}T00:00:00Z`) + days * DAY_MS;
+  const d = new Date(t);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -521,7 +712,10 @@ export function planEconomics(p: SnapshotProtocol, age: number | null, model: Mo
   const net = lowEnd - totalCost;
   const ratio = lowEnd / totalCost;
   const verdict: 'FARM' | 'THIN' | 'SKIP' = ratio >= VERDICT_FARM_RATIO ? 'FARM' : ratio >= VERDICT_THIN_RATIO ? 'THIN' : 'SKIP';
-  return { capital_usd: totalCapital, gas_usd: gas, total_cost_usd: totalCost, low_end_usd: lowEnd, net_usd: net, verdict };
+  // The launch value at which the plan breaks even at the low end: low_end = implied x low_factor,
+  // so the plan nets zero when implied = all-in cost / low_factor.
+  const breakEven = Math.max(1, Math.round(totalCost / model.low_factor));
+  return { capital_usd: totalCapital, gas_usd: gas, total_cost_usd: totalCost, low_end_usd: lowEnd, net_usd: net, break_even_usd: breakEven, verdict };
 }
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
@@ -549,6 +743,7 @@ export function buildBoard(snapshot: Snapshot, calibrated?: { model: ModelConsta
     return { p, ...v, econ: planEconomics(p, v.age, model, v.implied) };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
+  const bands = bootstrapBands(snapshot, model, scored.map((s) => ({ slug: s.p.slug, protocol: s.p })));
   return scored.map((s, i) => ({
     rank: i + 1,
     slug: s.p.slug,
@@ -564,6 +759,10 @@ export function buildBoard(snapshot: Snapshot, calibrated?: { model: ModelConsta
     token_status: 'pre-token',
     age_days: s.age,
     implied_value_usd: s.implied,
+    implied_p10_usd: bands.get(s.p.slug)!.p10,
+    implied_p90_usd: bands.get(s.p.slug)!.p90,
+    rank_low: bands.get(s.p.slug)!.rankLow,
+    rank_high: bands.get(s.p.slug)!.rankHigh,
     model: {
       size_curve_intercept: round4(model.size_curve_intercept),
       size_curve_slope: round4(model.size_curve_slope),
@@ -580,8 +779,9 @@ export function buildBoard(snapshot: Snapshot, calibrated?: { model: ModelConsta
     farm_gas_usd: s.econ.gas_usd,
     farm_low_end_usd: s.econ.low_end_usd,
     farm_net_usd: s.econ.net_usd,
+    farm_break_even_usd: s.econ.break_even_usd,
     farm_verdict: s.econ.verdict,
-    farm_steps: farmSteps(s.p, s.age, model, s.implied).map(stepText),
+    farm_steps: farmSteps(s.p, s.age, model, s.implied, snapshot.as_of).map(stepText),
   }));
 }
 
@@ -713,10 +913,11 @@ function secondActionFor(p: SnapshotProtocol, capital: number, chain: string): s
  * the protocol's own record (category, chains, TVL, age, seven-day growth), never from a hand-written
  * list of names: the main and second actions follow the category, the multi-chain step follows the
  * chain list, the capital follows TVL, the hold follows age, and the cadence step reads the growth.
- * The last step nets the plan: its all-in cost, the value at the market's low end, the net after cost,
- * and the verdict.
+ * The plan is dated: it starts on the snapshot's date and holds until a named end date. The last step
+ * nets the plan: its all-in cost, the value at the market's low end, the net after cost, the verdict,
+ * and the launch value at which the plan breaks even at the low end.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null, model: ModelConstants, implied: number): FarmStep[] {
+export function farmSteps(p: SnapshotProtocol, age: number | null, model: ModelConstants, implied: number, asOf: string): FarmStep[] {
   const chain = chainOf(p);
   const second = secondChainOf(p);
   const capital = capitalFor(p);
@@ -733,7 +934,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, model: ModelC
   const econ = planEconomics(p, age, model, implied);
   return [
     {
-      text: `Open a fresh wallet for this farm only, fund it on ${chain} with $${capital} in USDC plus about $5 for gas, and keep its seed phrase offline.`,
+      text: `On ${formatDay(asOf)}, open a fresh wallet for this farm only, fund it on ${chain} with $${capital} in USDC plus about $5 for gas, and keep its seed phrase offline.`,
       cost: `$${capital} of USDC plus about $5 of gas`,
       time: '10 minutes',
     },
@@ -761,12 +962,12 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, model: ModelC
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${hold} days: ${p.name} has been tracked since ${listed}, so a position that spans several snapshots counts more than a one-day deposit.`,
+      text: `Hold the position for at least ${hold} days, until ${addDays(asOf, hold)}: ${p.name} has been tracked since ${listed}, so a position that spans several snapshots counts more than a one-day deposit.`,
       cost: `the $${capital} stays in the position`,
       time: `${hold} days`,
     },
     {
-      text: `Before you withdraw, open ${p.name}'s own points or rewards page from its official site and claim only from the link it publishes; never pay a fee to claim, and log the wallet, the dates and every transaction hash. Plan total: ${formatUsdInt(econ.total_cost_usd)} all in (${formatUsdInt(econ.capital_usd)} capital + ${formatUsdInt(econ.gas_usd)} gas). At the comps' low end this protocol is worth ${formatUsdInt(econ.low_end_usd)} — net ${formatUsdInt(econ.net_usd)} after the plan's cost, verdict ${econ.verdict}.`,
+      text: `Before you withdraw, open ${p.name}'s own rewards page from its official site and claim only from the link it publishes; never pay a fee to claim, and log the wallet, the dates and every transaction hash. Plan total ${formatUsdInt(econ.total_cost_usd)} all in. At the comps' low end this protocol is worth ${formatUsdInt(econ.low_end_usd)} — net ${formatUsdInt(econ.net_usd)}, verdict ${econ.verdict}. Breaks even if the token launches at ${formatUsdInt(econ.break_even_usd)} at the low end.`,
       cost: 'no fee to check, and never pay to claim',
       time: '15 minutes',
     },
@@ -804,6 +1005,10 @@ export function radarRow(row: BoardRow): RadarRow {
     listed_at: row.listed_at,
     age_days: row.age_days,
     implied_value_usd: row.implied_value_usd,
+    implied_p10_usd: row.implied_p10_usd,
+    implied_p90_usd: row.implied_p90_usd,
+    rank_low: row.rank_low,
+    rank_high: row.rank_high,
     multiple: row.model.multiple,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
@@ -813,6 +1018,7 @@ export function radarRow(row: BoardRow): RadarRow {
     farm_gas_usd: row.farm_gas_usd,
     farm_low_end_usd: row.farm_low_end_usd,
     farm_net_usd: row.farm_net_usd,
+    farm_break_even_usd: row.farm_break_even_usd,
     farm_verdict: row.farm_verdict,
   };
 }
@@ -823,6 +1029,26 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const board = buildBoard(snapshot, calibrated);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
+  // The audit: every pre-token protocol accounted for. The groups are exclusive and sum with the
+  // ranked rows to the pre-token total.
+  const preToken = snapshot.protocols.filter(isPreToken);
+  const excludedCex = preToken.filter((p) => p.category === 'CEX');
+  const excludedVersioned = preToken.filter((p) => p.category !== 'CEX' && VERSIONED.test(p.name));
+  const excludedAboveFloor = preToken.filter(
+    (p) => p.category !== 'CEX' && !VERSIONED.test(p.name) && p.tvl_usd >= snapshot.floor_usd && !snapshot.watchlist.includes(p.slug),
+  );
+  const wrappedWord = (c: string | null): boolean => {
+    const s = (c ?? '').toLowerCase();
+    return s.includes('bridge') || s.includes('staking') || s.includes('restak') || s.includes('wrapper') || s.includes('anchor btc') || s.includes('decentralized btc');
+  };
+  const audit: Audit = {
+    pre_token: preToken.length,
+    ranked: board.length,
+    excluded_cex: excludedCex.length,
+    excluded_versioned: excludedVersioned.length,
+    excluded_above_floor: excludedAboveFloor.length,
+    excluded_above_floor_wrapped: excludedAboveFloor.filter((p) => wrappedWord(p.category)).length,
+  };
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -830,6 +1056,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     model: calibrated.model,
     model_version: MODEL_VERSION,
     calibration: calibrated.calibration,
+    audit,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,

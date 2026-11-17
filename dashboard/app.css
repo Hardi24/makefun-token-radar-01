@@ -51,6 +51,8 @@ button { cursor: pointer; }
 .stat span { color: var(--muted); font-size: 12px; }
 .stat b { font-family: var(--font-num); font-size: 17px; font-weight: 600; }
 .stat small { color: var(--faint); font-size: 11px; }
+.valid { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: var(--s2); padding: var(--s3) var(--s4); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s); color: var(--muted); font-size: 13px; }
+.valid b { color: var(--ink); font-weight: 600; }
 
 .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); margin: var(--s5) 0 var(--s3); }
 .section-title .sub { color: var(--muted); font-size: 13px; }

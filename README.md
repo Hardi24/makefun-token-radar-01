@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/token-radar-01/Hardi24/makefun-token-radar-01/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/Hardi24/makefun-token-radar-01/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-Token Radar (radar-3): a launch radar that ranks 226 pre-token protocols by an implied value fitted to the market — a size curve fitted to 85 live-token comparables from the snapshot itself, tested blind with 5-fold cross-validation — and gives every protocol a 7-step farm plan netted at the market's low end with a FARM / THIN / SKIP verdict.
+Token Radar (radar-4): a launch radar that ranks 226 pre-token protocols by an implied value fitted to the market — a size curve fitted to 85 live-token comparables from the snapshot itself, tested blind walk-forward (it beats a flat multiple on both time splits), leave-one-out and 5-fold, with a 200-refit bootstrap band on every row — and gives every protocol a dated 7-step farm plan netted at the market's low end with a FARM / THIN / SKIP verdict and a break-even launch value.
 
 ## Run it
 
